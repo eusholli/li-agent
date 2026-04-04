@@ -1,0 +1,15 @@
+services:
+  li-article-api:
+    container_name: li-article-api
+    build:
+      context: .
+    restart: unless-stopped
+    environment:
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      TAVILY_API_KEY: ${TAVILY_API_KEY}
+    networks:
+      - webproxy
+
+networks:
+  webproxy:
+    external: true

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "additionalDirectories": [
+      "../event-planner",
+      "../sales-recon",
+      "../../.openclaw"
+    ]
+  }
+}

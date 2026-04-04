@@ -1,0 +1,7 @@
+/.DS_Store
+/.env
+/.vscode
+/__pycache__
+/venv
+/mlruns
+tavily_cache.json

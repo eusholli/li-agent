@@ -1,0 +1,15 @@
+services:
+  li-article-api:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=webproxy"
+      - "traefik.http.routers.li-article-api.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.li-article-api.entrypoints=websecure"
+      - "traefik.http.routers.li-article-api.tls.certresolver=myresolver"
+      - "traefik.http.services.li-article-api.loadbalancer.server.port=8000"
+      # Flush SSE events immediately — without this Traefik buffers the stream
+      - "traefik.http.services.li-article-api.loadbalancer.responseForwarding.flushInterval=1ms"
+
+networks:
+  webproxy:
+    external: true
