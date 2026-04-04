@@ -77,7 +77,15 @@ def _run_generation(req: GenerateRequest, progress_queue: queue.Queue) -> None:
                 "original": result["original_article"],
                 "humanized": result["humanized_article"],
             },
-            "word_count": result["word_count"],
+            "score": {
+                "word_count": result["word_count"],
+                "percentage": None,
+                "performance_tier": None,
+                "meets_requirements": True,
+                "overall_feedback": fc.summary_feedback if fc else None,
+            },
+            "target_achieved": True,
+            "iterations_used": 1,
             "fact_check": {
                 "passed": fc.fact_check_passed,
                 "summary": fc.summary_feedback,

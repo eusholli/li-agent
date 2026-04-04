@@ -43,18 +43,18 @@ Authorization: Bearer <clerk_jwt>
 | Field | Type | Required | Default | Constraints | Description |
 |---|---|---|---|---|---|
 | `draft` | string | yes | — | min 50 chars | Article draft, outline, or topic description |
-| `target_score` | number | no | `89.0` | 0–100 | Quality score % to reach before returning. 89%+ = world-class |
-| `max_iterations` | integer | no | `10` | 1–50 | Maximum improvement iterations before giving up |
-| `word_count_min` | integer | no | `2000` | ≥100 | Minimum article word count |
-| `word_count_max` | integer | no | `2500` | ≥100 | Maximum article word count |
-| `model` | string | no | `"moonshotai/kimi-k2-thinking"` | — | Default model used for all components unless overridden |
-| `generator_model` | string\|null | no | `null` | — | Override model for article generation |
-| `judge_model` | string\|null | no | `null` | — | Override model for quality scoring |
-| `rag_model` | string\|null | no | `null` | — | Override model for web search/retrieval |
-| `humanizer_model` | string\|null | no | `null` | — | Override model for humanization — defaults to `generator_model` if not set |
-| `recreate_ctx` | boolean | no | `false` | — | Re-run web search on each iteration (slower, potentially more accurate) |
+| `target_score` | number | no | `89.0` | 0–100 | Quality score % used in scoring criteria prompt |
+| `max_iterations` | integer | no | `1` | 1–1 | Kept for backwards compatibility; always 1 (single-pass pipeline) |
+| `word_count_min` | integer | no | `1500` | ≥100 | Minimum article word count |
+| `word_count_max` | integer | no | `2000` | ≥100 | Maximum article word count |
+| `model` | string | no | `"gemini/gemini-2.5-flash"` | — | Default fallback model used for all components unless overridden |
+| `generator_model` | string\|null | no | `"gemini/gemini-2.5-pro"` | — | Override model for article generation |
+| `judge_model` | string\|null | no | `"gemini/gemini-2.5-flash"` | — | Override model for fact-checking / quality scoring |
+| `rag_model` | string\|null | no | `"gemini/gemini-2.5-flash"` | — | Override model for web search query generation |
+| `fact_check` | boolean | no | `true` | — | Whether to fact-check the article against RAG sources |
+| `use_undetectable` | boolean | no | `false` | — | Whether to run through Undetectable.ai API (requires `UNDETECTABLE_API_KEY`) |
 
-Model strings are OpenRouter model IDs, e.g. `"anthropic/claude-3-5-sonnet"`, `"openai/gpt-4o"`, `"google/gemini-2.0-flash-001"`.
+Model strings are DSPy-compatible model IDs. The default models use Google Gemini (requires `GEMINI_API_KEY`). OpenRouter models (e.g. `"openrouter/anthropic/claude-3-5-sonnet"`) require `OPENROUTER_API_KEY`.
 
 **Minimal request example**
 
@@ -70,12 +70,13 @@ Model strings are OpenRouter model IDs, e.g. `"anthropic/claude-3-5-sonnet"`, `"
 {
   "draft": "Most executives think AI will automate their workforce...",
   "target_score": 85.0,
-  "max_iterations": 5,
   "word_count_min": 1500,
   "word_count_max": 2000,
-  "generator_model": "anthropic/claude-3-5-sonnet",
-  "judge_model": "openai/gpt-4o",
-  "rag_model": "google/gemini-2.0-flash-001"
+  "generator_model": "gemini/gemini-2.5-pro",
+  "judge_model": "gemini/gemini-2.5-flash",
+  "rag_model": "gemini/gemini-2.5-flash",
+  "fact_check": true,
+  "use_undetectable": false
 }
 ```
 
@@ -156,91 +157,49 @@ The terminal success event. The stream ends immediately after this event.
     "humanized": "# Article Title\n\nPost-humanization markdown..."
   },
   "score": {
-    "percentage": 91.3,
-    "performance_tier": "World-class",
+    "percentage": null,
+    "performance_tier": null,
     "word_count": 2187,
     "meets_requirements": true,
-    "overall_feedback": "Strong strategic framing..."
+    "overall_feedback": "Strong strategic framing with well-supported claims."
   },
-  "detection": {
-    "original": {
-      "ai_score": 94.0,
-      "human_score": 6.0,
-      "per_detector": {
-        "gpt_zero": 12.0,
-        "openai": 0.0,
-        "writer": 100.0,
-        "cross_plag": 100.0,
-        "copy_leaks": 100.0,
-        "sapling": 100.0,
-        "content_at_scale": 100.0,
-        "zero_gpt": 94.0
-      }
-    },
-    "humanized": {
-      "ai_score": 18.0,
-      "human_score": 82.0,
-      "per_detector": {
-        "gpt_zero": 2.0,
-        "openai": 0.0,
-        "writer": 88.0,
-        "cross_plag": 100.0,
-        "copy_leaks": 100.0,
-        "sapling": 75.0,
-        "content_at_scale": 80.0,
-        "zero_gpt": 22.0
-      }
-    }
+  "fact_check": {
+    "passed": true,
+    "summary": "All claims verified against retrieved sources."
   },
   "target_achieved": true,
-  "iterations_used": 3
+  "iterations_used": 1
 }
 ```
 
-> **`detection` is `null`** when `UNDETECTABLE_API_KEY` is not configured server-side. Individual detector entries within `detection.original` or `detection.humanized` may also be `null` if that specific detection call failed.
+> **`fact_check` is `null`** when `fact_check: false` is set in the request or when no RAG sources were retrieved.
 
 **`article` object fields:**
 
 | Field | Type | Description |
 |---|---|---|
-| `original` | string | The article after quality scoring and fact-checking, before humanization |
-| `humanized` | string | The article after the three-pass humanizer rewrite. Use this for publishing. If humanization fails, equals `original`. |
+| `original` | string | The article after generation and fact-checking, before humanization |
+| `humanized` | string | The article after the humanizer rewrite. Use this for publishing. If humanization fails, equals `original`. |
 
 **`score` object fields:**
 
 | Field | Type | Description |
 |---|---|---|
-| `percentage` | number | Quality score 0–100, evaluated against the pre-humanization article |
-| `performance_tier` | string | `"World-class"` / `"Strong"` / `"Needs restructuring"` / `"Rework"` |
-| `word_count` | integer | Word count of the pre-humanization article |
-| `meets_requirements` | boolean | Both score and word count targets were met |
-| `overall_feedback` | string\|null | Human-readable summary from the judge |
+| `percentage` | null | Always `null` in the current single-pass pipeline (scoring loop removed) |
+| `performance_tier` | null | Always `null` in the current single-pass pipeline |
+| `word_count` | integer | Word count of the generated article |
+| `meets_requirements` | boolean | Always `true` in the current pipeline |
+| `overall_feedback` | string\|null | Fact-check summary feedback, or `null` when fact-checking is disabled |
 
-**`detection` object fields:**
+**`fact_check` object fields:**
 
 | Field | Type | Description |
 |---|---|---|
-| `detection` | object\|null | AI detection scores, or `null` if `UNDETECTABLE_API_KEY` is not set |
-| `detection.original` | object\|null | Detection scores for the pre-humanization article |
-| `detection.humanized` | object\|null | Detection scores for the post-humanization article |
-| `detection.*.ai_score` | number | Overall AI-ness score (0–100). Under 50 = human; under 25 = strongly human |
-| `detection.*.human_score` | number | Overall human probability % (0–100). Complement of `ai_score` |
-| `detection.*.per_detector` | object | Per-detector human scores (0–100) from individual classifiers |
+| `fact_check` | object\|null | Fact-check results, or `null` when `fact_check: false` or no RAG context |
+| `fact_check.passed` | boolean | Whether the fact-checker cleared the article |
+| `fact_check.summary` | string | Human-readable fact-check summary |
 
-**`detection.*.per_detector` keys** — each value is a human-probability % (0–100):
-
-| Key | Detector |
-|---|---|
-| `gpt_zero` | GPTZero |
-| `openai` | OpenAI Text Classifier |
-| `writer` | Writer.com |
-| `cross_plag` | CrossPlag |
-| `copy_leaks` | CopyLeaks |
-| `sapling` | Sapling |
-| `content_at_scale` | Content at Scale |
-| `zero_gpt` | ZeroGPT |
-
-**`target_achieved`**: `true` means both `percentage >= target_score` AND word count is within range. If max_iterations was reached before hitting the target, this will be `false` but the best article found is still returned.
+**`target_achieved`**: Always `true` in the current single-pass pipeline. **`iterations_used`**: Always `1`.
 
 ### Event type: `error`
 
@@ -265,15 +224,15 @@ Copy these into your project for fully typed SSE handling.
 export interface GenerateRequest {
   draft: string;
   target_score?: number;        // default 89.0
-  max_iterations?: number;      // default 10
-  word_count_min?: number;      // default 2000
-  word_count_max?: number;      // default 2500
-  model?: string;               // default "moonshotai/kimi-k2-thinking"
-  generator_model?: string | null;
-  judge_model?: string | null;
-  rag_model?: string | null;
-  humanizer_model?: string | null; // defaults to generator_model
-  recreate_ctx?: boolean;       // default false
+  max_iterations?: number;      // always 1; kept for backwards compat
+  word_count_min?: number;      // default 1500
+  word_count_max?: number;      // default 2000
+  model?: string;               // default "gemini/gemini-2.5-flash"
+  generator_model?: string | null; // default "gemini/gemini-2.5-pro"
+  judge_model?: string | null;     // default "gemini/gemini-2.5-flash"
+  rag_model?: string | null;       // default "gemini/gemini-2.5-flash"
+  fact_check?: boolean;         // default true
+  use_undetectable?: boolean;   // default false
 }
 
 // ── SSE Events ───────────────────────────────────────────────────────────────
@@ -317,10 +276,13 @@ export interface HeartbeatEvent {
 }
 
 export interface ArticleScore {
-  percentage: number;
-  performance_tier: "World-class" | "Strong" | "Needs restructuring" | "Rework";
+  /** Always null in the current single-pass pipeline */
+  percentage: null;
+  /** Always null in the current single-pass pipeline */
+  performance_tier: null;
   word_count: number;
   meets_requirements: boolean;
+  /** Fact-check summary feedback, or null when fact-checking is disabled */
   overall_feedback: string | null;
 }
 
@@ -331,37 +293,17 @@ export interface ArticleResult {
   humanized: string;
 }
 
-export interface PerDetectorScores {
-  gpt_zero: number;
-  openai: number;
-  writer: number;
-  cross_plag: number;
-  copy_leaks: number;
-  sapling: number;
-  content_at_scale: number;
-  zero_gpt: number;
-}
-
-export interface DetectionScore {
-  /** Overall AI-ness score 0–100. Under 50 = human; under 25 = strongly human */
-  ai_score: number;
-  /** Overall human probability % (complement of ai_score) */
-  human_score: number;
-  /** Per-detector human scores 0–100 */
-  per_detector: PerDetectorScores;
-}
-
-export interface DetectionScores {
-  original: DetectionScore | null;
-  humanized: DetectionScore | null;
+export interface FactCheckResult {
+  passed: boolean;
+  summary: string;
 }
 
 export interface CompleteEvent {
   type: "complete";
   article: ArticleResult;
   score: ArticleScore;
-  /** null when UNDETECTABLE_API_KEY is not configured server-side */
-  detection: DetectionScores | null;
+  /** null when fact_check: false or no RAG sources were retrieved */
+  fact_check: FactCheckResult | null;
   target_achieved: boolean;
   iterations_used: number;
 }
@@ -617,8 +559,10 @@ function ArticleGenerator() {
 
       {result && (
         <div>
-          <p>Score: {result.score.percentage.toFixed(1)}% — {result.score.performance_tier}</p>
           <p>Words: {result.score.word_count} | Iterations: {result.iterations_used}</p>
+          {result.fact_check && (
+            <p>Fact-check: {result.fact_check.passed ? "✅ Passed" : "⚠️ Issues found"} — {result.fact_check.summary}</p>
+          )}
           <article>{result.article.humanized}</article>
         </div>
       )}
@@ -637,10 +581,10 @@ The API server requires these variables in `.env` or the process environment:
 |---|---|---|
 | `WEBAPP_URL` | yes (auth) | Base URL of the event-planner webapp, e.g. `https://events.example.com` |
 | `CRON_SECRET_KEY` | yes (auth) | Shared secret for calling `/api/intelligence/session` on event-planner |
-| `GEMINI_API_KEY` | yes | Google Gemini API key (default model) |
-| `OPENROUTER_API_KEY` | no | OpenRouter key (for non-Gemini models) |
-| `TAVILY_API_KEY` | no | Tavily web search API key |
-| `UNDETECTABLE_API_KEY` | no | Undetectable.ai key (AI detection scoring) |
+| `GEMINI_API_KEY` | yes | Google Gemini API key — required for the default `gemini/gemini-2.5-*` models |
+| `OPENROUTER_API_KEY` | no | OpenRouter key (for non-Gemini model overrides) |
+| `TAVILY_API_KEY` | no | Tavily web search API key (RAG context) |
+| `UNDETECTABLE_API_KEY` | no | Undetectable.ai key — required when `use_undetectable: true` |
 
 ---
 
@@ -655,7 +599,7 @@ The API server requires these variables in `.env` or the process environment:
 | `WEBAPP_URL` or `CRON_SECRET_KEY` not set | HTTP `500 Internal Server Error` |
 | `draft` shorter than 50 characters | HTTP `422 Unprocessable Entity` before stream opens |
 | `target_score` outside 0–100 | HTTP `422 Unprocessable Entity` |
-| `max_iterations` outside 1–50 | HTTP `422 Unprocessable Entity` |
+| `max_iterations` not equal to 1 | HTTP `422 Unprocessable Entity` (locked to 1) |
 | Invalid/unavailable model name | `error` event on the SSE stream |
 | `OPENROUTER_API_KEY` missing or invalid | `error` event on the SSE stream |
 | `TAVILY_API_KEY` missing (web search fails) | Generation continues without RAG context |

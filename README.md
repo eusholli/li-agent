@@ -1,6 +1,8 @@
-# LinkedIn Article Generator - Usage Guide
+# li-agent — LinkedIn Article Generator
 
 A DSPy-powered system that transforms article drafts or outlines into world-class LinkedIn articles through high-performance web search, intelligent content packing, and iterative improvement with comprehensive scoring.
+
+> **Repo renamed**: this project was previously known as `li-article-agent`.
 
 ## Quick Start
 
