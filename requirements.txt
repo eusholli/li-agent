@@ -1,15 +1,11 @@
 pydantic
 python-dotenv
 dspy==3.1.3
-attachments
-ddgs
 tavily-python
 beautifulsoup4
 lxml
-mlflow
 fastapi
 uvicorn[standard]
 sse-starlette
 httpx
 google-generativeai
-
