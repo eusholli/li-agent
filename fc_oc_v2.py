@@ -66,8 +66,6 @@ import dspy
 from dspy_factory import get_openrouter_model, DspyModelConfig
 from pydantic import BaseModel, Field
 
-import mlflow
-from datetime import datetime
 
 # ---------------
 # Utility helpers
@@ -623,10 +621,6 @@ def resolve_model(
 
 
 def main():
-
-    current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-    mlflow.set_experiment(f"DSPy One Fact {current_time}")
-    mlflow.dspy.autolog()  # type: ignore # Automatically log DSPy runs to MLflow
 
     DEFAULT_MODEL_NAME = "moonshotai/kimi-k2:free"
     JUDGE_MODEL_NAME = "deepseek/deepseek-r1-0528:free"
