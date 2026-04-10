@@ -28,6 +28,8 @@ Health check. Use this to confirm the server is up before initiating generation.
 
 Generate a LinkedIn article. The response is a **Server-Sent Events stream** that delivers real-time progress events followed by the completed article.
 
+Humanization is a separate optional step — call `POST /humanize` after generation if you want AI-pattern removal applied.
+
 **Authentication required.** Include a valid Clerk JWT in the `Authorization` header. The user's role (from `publicMetadata.role` in Clerk) must be `root` or `marketing`. Other roles receive `403 Forbidden`.
 
 **Request headers**
@@ -43,6 +45,7 @@ Authorization: Bearer <clerk_jwt>
 | Field | Type | Required | Default | Constraints | Description |
 |---|---|---|---|---|---|
 | `draft` | string | yes | — | min 50 chars | Article draft, outline, or topic description |
+| `article_type` | string | no | `"thought_leadership"` | see [Article Types](#article-types) | Controls scoring criteria and content style for the generated article |
 | `target_score` | number | no | `89.0` | 0–100 | Quality score % used in scoring criteria prompt |
 | `max_iterations` | integer | no | `1` | 1–1 | Kept for backwards compatibility; always 1 (single-pass pipeline) |
 | `word_count_min` | integer | no | `1500` | ≥100 | Minimum article word count |
@@ -52,7 +55,6 @@ Authorization: Bearer <clerk_jwt>
 | `judge_model` | string\|null | no | `"gemini/gemini-2.5-flash"` | — | Override model for fact-checking / quality scoring |
 | `rag_model` | string\|null | no | `"gemini/gemini-2.5-flash"` | — | Override model for web search query generation |
 | `fact_check` | boolean | no | `true` | — | Whether to fact-check the article against RAG sources |
-| `use_undetectable` | boolean | no | `false` | — | Whether to run through Undetectable.ai API (requires `UNDETECTABLE_API_KEY`) |
 
 Model strings are DSPy-compatible model IDs. The default models use Google Gemini (requires `GEMINI_API_KEY`). OpenRouter models (e.g. `"openrouter/anthropic/claude-3-5-sonnet"`) require `OPENROUTER_API_KEY`.
 
@@ -69,13 +71,94 @@ Model strings are DSPy-compatible model IDs. The default models use Google Gemin
 ```json
 {
   "draft": "Most executives think AI will automate their workforce...",
+  "article_type": "thought_leadership",
   "target_score": 85.0,
   "word_count_min": 1500,
   "word_count_max": 2000,
   "generator_model": "gemini/gemini-2.5-pro",
   "judge_model": "gemini/gemini-2.5-flash",
   "rag_model": "gemini/gemini-2.5-flash",
-  "fact_check": true,
+  "fact_check": true
+}
+```
+
+---
+
+## Article Types
+
+The `article_type` field selects the scoring criteria and content style used during generation. Each type optimizes for a different LinkedIn content goal.
+
+| Type key | Label | Goal |
+|---|---|---|
+| `thought_leadership` | Thought Leadership | Deep analytical content that challenges conventional wisdom and establishes the author as an authoritative voice. Uses first-principles thinking and strategic deconstruction. **(default)** |
+| `awareness` | Awareness | Educates and builds brand recognition among people unfamiliar with the topic. Optimizes for shareability, jargon-free clarity, and attracting new followers — not selling. |
+| `demand_gen` | Demand Generation | Drives qualified leads or conversions. Vividly articulates the problem, presents a credible solution with proof, handles objections, and closes with a specific CTA. |
+| `event_attendance` | Event Attendance | Drives registrations for a conference, webinar, or workshop. Highlights specific event value, creates genuine FOMO, and makes registering feel effortless. |
+| `recruitment` | Recruitment | Attracts qualified candidates. Authentically portrays culture, growth opportunities, and mission — speaking to what ambitious people care about, not just job requirements. |
+| `product_announcement` | Product Announcement | Creates excitement for a new product or feature. Explains the problem solved, quantifies user benefits, provides early validation, and maintains credibility throughout. |
+| `case_study` | Case Study | Builds credibility through a customer success story. Makes the challenge relatable, narrates the solution journey authentically, proves results with specific metrics, and extracts transferable lessons. |
+
+**Example — demand generation article:**
+
+```json
+{
+  "draft": "Companies are losing 30% of qualified leads because their follow-up takes too long...",
+  "article_type": "demand_gen",
+  "word_count_min": 1200,
+  "word_count_max": 1600
+}
+```
+
+**Example — event attendance article:**
+
+```json
+{
+  "draft": "Our annual AI Summit is on June 15 in San Francisco. Last year 800 attendees joined...",
+  "article_type": "event_attendance",
+  "word_count_min": 800,
+  "word_count_max": 1200
+}
+```
+
+---
+
+### `POST /humanize`
+
+Humanize a pre-generated article to remove AI writing patterns and apply brand voice. This is an optional second step after `POST /articles/generate`. The response is a **Server-Sent Events stream** identical in structure to the generate endpoint.
+
+**Authentication required.** Same Clerk JWT rules as `/articles/generate`.
+
+**Request headers**
+
+```
+Content-Type: application/json
+Accept: text/event-stream
+Authorization: Bearer <clerk_jwt>
+```
+
+**Request body**
+
+| Field | Type | Required | Default | Constraints | Description |
+|---|---|---|---|---|---|
+| `article` | string | yes | — | min 50 chars | Article text to humanize (use `article.text` from the generate complete event) |
+| `model` | string | no | `"gemini/gemini-2.5-flash"` | — | Default fallback model |
+| `humanizer_model` | string\|null | no | `null` | — | Override model for the humanization LLM pass (overrides `model`) |
+| `use_undetectable` | boolean | no | `false` | — | Whether to also run through Undetectable.ai API (requires `UNDETECTABLE_API_KEY`) |
+
+**Minimal request example**
+
+```json
+{
+  "article": "# Why AI Strategy Must Start at the Board Level\n\nMost executives think AI will automate their workforce..."
+}
+```
+
+**Full request example**
+
+```json
+{
+  "article": "# Why AI Strategy Must Start at the Board Level\n\nMost executives think AI will automate their workforce...",
+  "humanizer_model": "gemini/gemini-2.5-pro",
   "use_undetectable": false
 }
 ```
@@ -84,7 +167,7 @@ Model strings are DSPy-compatible model IDs. The default models use Google Gemin
 
 ## SSE Event Stream Protocol
 
-The response body is a stream of `text/event-stream` lines. Each event follows the standard SSE format:
+Both `/articles/generate` and `/humanize` use the same SSE event stream protocol. The response body is a stream of `text/event-stream` lines. Each event follows the standard SSE format:
 
 ```
 data: <JSON>\n\n
@@ -145,16 +228,15 @@ Keep-alive ping emitted every ~0.5 s when the worker is busy but has no new prog
 {"type": "heartbeat"}
 ```
 
-### Event type: `complete`
+### Event type: `complete` (generate)
 
-The terminal success event. The stream ends immediately after this event.
+The terminal success event from `POST /articles/generate`. The stream ends immediately after this event.
 
 ```json
 {
   "type": "complete",
   "article": {
-    "original": "# Article Title\n\nPre-humanization markdown...",
-    "humanized": "# Article Title\n\nPost-humanization markdown..."
+    "text": "# Article Title\n\nGenerated markdown content..."
   },
   "score": {
     "percentage": null,
@@ -174,12 +256,11 @@ The terminal success event. The stream ends immediately after this event.
 
 > **`fact_check` is `null`** when `fact_check: false` is set in the request or when no RAG sources were retrieved.
 
-**`article` object fields:**
+**`article` object fields (generate):**
 
 | Field | Type | Description |
 |---|---|---|
-| `original` | string | The article after generation and fact-checking, before humanization |
-| `humanized` | string | The article after the humanizer rewrite. Use this for publishing. If humanization fails, equals `original`. |
+| `text` | string | The generated article after fact-checking. Pass this to `POST /humanize` if humanization is desired. |
 
 **`score` object fields:**
 
@@ -201,6 +282,25 @@ The terminal success event. The stream ends immediately after this event.
 
 **`target_achieved`**: Always `true` in the current single-pass pipeline. **`iterations_used`**: Always `1`.
 
+### Event type: `complete` (humanize)
+
+The terminal success event from `POST /humanize`. The stream ends immediately after this event.
+
+```json
+{
+  "type": "complete",
+  "article": {
+    "humanized": "# Article Title\n\nHumanized markdown content..."
+  }
+}
+```
+
+**`article` object fields (humanize):**
+
+| Field | Type | Description |
+|---|---|---|
+| `humanized` | string | The article after the humanizer rewrite with AI patterns removed and brand voice applied. Use this for publishing. |
+
 ### Event type: `error`
 
 The terminal failure event. The stream ends immediately after this event.
@@ -219,25 +319,42 @@ The terminal failure event. The stream ends immediately after this event.
 Copy these into your project for fully typed SSE handling.
 
 ```typescript
-// ── Request ──────────────────────────────────────────────────────────────────
+// ── Requests ─────────────────────────────────────────────────────────────────
+
+export type ArticleType =
+  | "thought_leadership"
+  | "awareness"
+  | "demand_gen"
+  | "event_attendance"
+  | "recruitment"
+  | "product_announcement"
+  | "case_study";
 
 export interface GenerateRequest {
   draft: string;
-  target_score?: number;        // default 89.0
-  max_iterations?: number;      // always 1; kept for backwards compat
-  word_count_min?: number;      // default 1500
-  word_count_max?: number;      // default 2000
-  model?: string;               // default "gemini/gemini-2.5-flash"
+  article_type?: ArticleType;      // default "thought_leadership"
+  target_score?: number;           // default 89.0
+  max_iterations?: number;         // always 1; kept for backwards compat
+  word_count_min?: number;         // default 1500
+  word_count_max?: number;         // default 2000
+  model?: string;                  // default "gemini/gemini-2.5-flash"
   generator_model?: string | null; // default "gemini/gemini-2.5-pro"
   judge_model?: string | null;     // default "gemini/gemini-2.5-flash"
   rag_model?: string | null;       // default "gemini/gemini-2.5-flash"
-  fact_check?: boolean;         // default true
-  use_undetectable?: boolean;   // default false
+  fact_check?: boolean;            // default true
+}
+
+export interface HumanizeRequest {
+  article: string;
+  model?: string;                  // default "gemini/gemini-2.5-flash"
+  humanizer_model?: string | null; // overrides model for the LLM humanization pass
+  use_undetectable?: boolean;      // default false — requires UNDETECTABLE_API_KEY server-side
 }
 
 // ── SSE Events ───────────────────────────────────────────────────────────────
 
-export type ProgressStage =
+/** Progress stages emitted by /articles/generate */
+export type GenerateProgressStage =
   | "init"
   | "start"
   | "rag_search"
@@ -252,18 +369,18 @@ export type ProgressStage =
   | "fact_check_passed"
   | "fact_check_failed"
   | "citation_issues"
+  | "complete_generation"
+  | "info";
+
+/** Progress stages emitted by /humanize */
+export type HumanizeProgressStage =
   | "humanizing"
   | "humanized"
   | "humanizing_api"
   | "humanizing_api_progress"
-  | "humanizing_api_done"
-  | "detecting_original"
-  | "detecting_humanized"
-  | "detecting_progress"
-  | "detected_original"
-  | "detected_humanized"
-  | "complete_version"
-  | "info";
+  | "humanizing_api_done";
+
+export type ProgressStage = GenerateProgressStage | HumanizeProgressStage;
 
 export interface ProgressEvent {
   type: "progress";
@@ -286,10 +403,13 @@ export interface ArticleScore {
   overall_feedback: string | null;
 }
 
-export interface ArticleResult {
-  /** Pre-humanization article — use for quality review or diff comparison */
-  original: string;
-  /** Post-humanization article — use this for publishing */
+export interface GenerateArticleResult {
+  /** Generated article after fact-checking. Pass to POST /humanize for humanization. */
+  text: string;
+}
+
+export interface HumanizeArticleResult {
+  /** Article after humanizer rewrite — use this for publishing. */
   humanized: string;
 }
 
@@ -298,14 +418,19 @@ export interface FactCheckResult {
   summary: string;
 }
 
-export interface CompleteEvent {
+export interface GenerateCompleteEvent {
   type: "complete";
-  article: ArticleResult;
+  article: GenerateArticleResult;
   score: ArticleScore;
   /** null when fact_check: false or no RAG sources were retrieved */
   fact_check: FactCheckResult | null;
   target_achieved: boolean;
   iterations_used: number;
+}
+
+export interface HumanizeCompleteEvent {
+  type: "complete";
+  article: HumanizeArticleResult;
 }
 
 export interface ErrorEvent {
@@ -316,7 +441,13 @@ export interface ErrorEvent {
 export type ArticleGeneratorEvent =
   | ProgressEvent
   | HeartbeatEvent
-  | CompleteEvent
+  | GenerateCompleteEvent
+  | ErrorEvent;
+
+export type HumanizerEvent =
+  | ProgressEvent
+  | HeartbeatEvent
+  | HumanizeCompleteEvent
   | ErrorEvent;
 
 // ── Health ───────────────────────────────────────────────────────────────────
@@ -336,59 +467,40 @@ A complete, copy-paste ready client using the browser's native `fetch` API. No e
 ```typescript
 import type {
   GenerateRequest,
+  HumanizeRequest,
   ArticleGeneratorEvent,
-  ArticleResult,
-  ProgressEvent,
-  CompleteEvent,
-  ErrorEvent,
+  HumanizerEvent,
+  GenerateCompleteEvent,
+  HumanizeCompleteEvent,
 } from "./article-generator-types"; // paste the types above into this file
 
-export interface GenerationCallbacks {
-  /** Called for every progress stage update */
+// ── Shared SSE streaming helper ───────────────────────────────────────────────
+
+interface StreamCallbacks<TComplete> {
   onProgress?: (stage: string, message: string) => void;
-  /** Called when generation completes successfully */
-  onComplete: (event: CompleteEvent) => void;
-  /** Called when generation fails */
+  onComplete: (event: TComplete) => void;
   onError: (message: string) => void;
 }
 
-/**
- * Generate a LinkedIn article by streaming events from the API.
- *
- * Returns an AbortController — call controller.abort() to cancel the request.
- *
- * @example
- * const ctrl = generateArticle(
- *   "http://localhost:8000",
- *   { draft: "AI is changing everything..." },
- *   {
- *     onProgress: (stage, message) => console.log(`[${stage}] ${message}`),
- *     onComplete: (event) => setArticle(event.article.humanized),
- *     onError: (msg) => setError(msg),
- *   }
- * );
- * // To cancel: ctrl.abort();
- */
-export function generateArticle(
-  baseUrl: string,
-  request: GenerateRequest,
-  callbacks: GenerationCallbacks,
-  clerkToken: string
+function streamSse<TEvent extends { type: string }, TComplete extends TEvent>(
+  url: string,
+  body: unknown,
+  clerkToken: string,
+  callbacks: StreamCallbacks<TComplete>
 ): AbortController {
   const controller = new AbortController();
 
   (async () => {
     let response: Response;
-
     try {
-      response = await fetch(`${baseUrl}/articles/generate`, {
+      response = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Accept: "text/event-stream",
           Authorization: `Bearer ${clerkToken}`,
         },
-        body: JSON.stringify(request),
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
     } catch (err: unknown) {
@@ -398,8 +510,8 @@ export function generateArticle(
     }
 
     if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      callbacks.onError(`HTTP ${response.status}: ${body}`);
+      const text = await response.text().catch(() => "");
+      callbacks.onError(`HTTP ${response.status}: ${text}`);
       return;
     }
 
@@ -413,33 +525,31 @@ export function generateArticle(
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-
-        // SSE lines are separated by double newlines
         const parts = buffer.split("\n\n");
-        buffer = parts.pop() ?? ""; // keep the incomplete trailing chunk
+        buffer = parts.pop() ?? "";
 
         for (const part of parts) {
-          const dataLine = part
-            .split("\n")
-            .find((line) => line.startsWith("data: "));
+          const dataLine = part.split("\n").find((l) => l.startsWith("data: "));
           if (!dataLine) continue;
 
-          let event: ArticleGeneratorEvent;
+          let event: TEvent;
           try {
-            event = JSON.parse(dataLine.slice(6)) as ArticleGeneratorEvent;
+            event = JSON.parse(dataLine.slice(6)) as TEvent;
           } catch {
-            continue; // malformed line — skip
+            continue;
           }
 
           if (event.type === "heartbeat") {
-            // Keep-alive — nothing to do
+            // keep-alive — ignore
           } else if (event.type === "progress") {
-            callbacks.onProgress?.(event.stage, event.message);
+            const e = event as unknown as { stage: string; message: string };
+            callbacks.onProgress?.(e.stage, e.message);
           } else if (event.type === "complete") {
-            callbacks.onComplete(event);
+            callbacks.onComplete(event as unknown as TComplete);
             return;
           } else if (event.type === "error") {
-            callbacks.onError(event.message);
+            const e = event as unknown as { message: string };
+            callbacks.onError(e.message);
             return;
           }
         }
@@ -453,6 +563,70 @@ export function generateArticle(
   })();
 
   return controller;
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/**
+ * Generate a LinkedIn article by streaming events from the API.
+ *
+ * Returns an AbortController — call controller.abort() to cancel.
+ *
+ * @example
+ * const ctrl = generateArticle(
+ *   "http://localhost:8000",
+ *   { draft: "AI is changing everything..." },
+ *   {
+ *     onProgress: (stage, message) => console.log(`[${stage}] ${message}`),
+ *     onComplete: (event) => setArticle(event.article.text),
+ *     onError: (msg) => setError(msg),
+ *   },
+ *   clerkToken
+ * );
+ */
+export function generateArticle(
+  baseUrl: string,
+  request: GenerateRequest,
+  callbacks: StreamCallbacks<GenerateCompleteEvent>,
+  clerkToken: string
+): AbortController {
+  return streamSse<ArticleGeneratorEvent, GenerateCompleteEvent>(
+    `${baseUrl}/articles/generate`,
+    request,
+    clerkToken,
+    callbacks
+  );
+}
+
+/**
+ * Humanize a pre-generated article by streaming events from the API.
+ *
+ * Returns an AbortController — call controller.abort() to cancel.
+ *
+ * @example
+ * const ctrl = humanizeArticle(
+ *   "http://localhost:8000",
+ *   { article: generatedText },
+ *   {
+ *     onProgress: (stage, message) => console.log(`[${stage}] ${message}`),
+ *     onComplete: (event) => setArticle(event.article.humanized),
+ *     onError: (msg) => setError(msg),
+ *   },
+ *   clerkToken
+ * );
+ */
+export function humanizeArticle(
+  baseUrl: string,
+  request: HumanizeRequest,
+  callbacks: StreamCallbacks<HumanizeCompleteEvent>,
+  clerkToken: string
+): AbortController {
+  return streamSse<HumanizerEvent, HumanizeCompleteEvent>(
+    `${baseUrl}/humanize`,
+    request,
+    clerkToken,
+    callbacks
+  );
 }
 
 /** Check that the API server is reachable. */
@@ -471,22 +645,20 @@ export async function checkHealth(baseUrl: string): Promise<boolean> {
 
 ```tsx
 import { useState, useRef, useCallback } from "react";
-import { generateArticle } from "./article-generator-client";
-import type { GenerateRequest, CompleteEvent } from "./article-generator-types";
+import { generateArticle, humanizeArticle } from "./article-generator-client";
+import type {
+  GenerateRequest,
+  HumanizeRequest,
+  GenerateCompleteEvent,
+  HumanizeCompleteEvent,
+} from "./article-generator-types";
 
-interface UseArticleGeneratorReturn {
-  generate: (request: GenerateRequest) => void;
-  cancel: () => void;
-  isGenerating: boolean;
-  progressMessages: string[];
-  result: CompleteEvent | null;
-  error: string | null;
-}
-
-export function useArticleGenerator(baseUrl: string): UseArticleGeneratorReturn {
+export function useArticleGenerator(baseUrl: string, clerkToken: string) {
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isHumanizing, setIsHumanizing] = useState(false);
   const [progressMessages, setProgressMessages] = useState<string[]>([]);
-  const [result, setResult] = useState<CompleteEvent | null>(null);
+  const [generateResult, setGenerateResult] = useState<GenerateCompleteEvent | null>(null);
+  const [humanizeResult, setHumanizeResult] = useState<HumanizeCompleteEvent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
 
@@ -494,7 +666,8 @@ export function useArticleGenerator(baseUrl: string): UseArticleGeneratorReturn 
     (request: GenerateRequest) => {
       setIsGenerating(true);
       setProgressMessages([]);
-      setResult(null);
+      setGenerateResult(null);
+      setHumanizeResult(null);
       setError(null);
 
       controllerRef.current = generateArticle(baseUrl, request, {
@@ -502,24 +675,59 @@ export function useArticleGenerator(baseUrl: string): UseArticleGeneratorReturn 
           setProgressMessages((prev) => [...prev, `[${stage}] ${message}`]);
         },
         onComplete: (event) => {
-          setResult(event);
+          setGenerateResult(event);
           setIsGenerating(false);
         },
         onError: (msg) => {
           setError(msg);
           setIsGenerating(false);
         },
-      });
+      }, clerkToken);
     },
-    [baseUrl]
+    [baseUrl, clerkToken]
+  );
+
+  const humanize = useCallback(
+    (request: HumanizeRequest) => {
+      setIsHumanizing(true);
+      setProgressMessages([]);
+      setHumanizeResult(null);
+      setError(null);
+
+      controllerRef.current = humanizeArticle(baseUrl, request, {
+        onProgress: (stage, message) => {
+          setProgressMessages((prev) => [...prev, `[${stage}] ${message}`]);
+        },
+        onComplete: (event) => {
+          setHumanizeResult(event);
+          setIsHumanizing(false);
+        },
+        onError: (msg) => {
+          setError(msg);
+          setIsHumanizing(false);
+        },
+      }, clerkToken);
+    },
+    [baseUrl, clerkToken]
   );
 
   const cancel = useCallback(() => {
     controllerRef.current?.abort();
     setIsGenerating(false);
+    setIsHumanizing(false);
   }, []);
 
-  return { generate, cancel, isGenerating, progressMessages, result, error };
+  return {
+    generate,
+    humanize,
+    cancel,
+    isGenerating,
+    isHumanizing,
+    progressMessages,
+    generateResult,
+    humanizeResult,
+    error,
+  };
 }
 ```
 
@@ -527,24 +735,33 @@ export function useArticleGenerator(baseUrl: string): UseArticleGeneratorReturn 
 
 ```tsx
 function ArticleGenerator() {
-  const { generate, cancel, isGenerating, progressMessages, result, error } =
-    useArticleGenerator("http://localhost:8000");
+  const {
+    generate, humanize, cancel,
+    isGenerating, isHumanizing,
+    progressMessages, generateResult, humanizeResult, error,
+  } = useArticleGenerator("http://localhost:8000", clerkToken);
 
   const handleSubmit = (draft: string) => {
     generate({
       draft,
-      target_score: 89.0,
-      max_iterations: 10,
       word_count_min: 2000,
       word_count_max: 2500,
     });
   };
 
+  const handleHumanize = () => {
+    if (!generateResult) return;
+    humanize({ article: generateResult.article.text });
+  };
+
+  const isBusy = isGenerating || isHumanizing;
+  const publishableArticle = humanizeResult?.article.humanized ?? generateResult?.article.text;
+
   return (
     <div>
       {/* ... your form ... */}
 
-      {isGenerating && (
+      {isBusy && (
         <div>
           <button onClick={cancel}>Cancel</button>
           <ul>
@@ -557,14 +774,20 @@ function ArticleGenerator() {
 
       {error && <p className="error">{error}</p>}
 
-      {result && (
+      {generateResult && !isGenerating && (
         <div>
-          <p>Words: {result.score.word_count} | Iterations: {result.iterations_used}</p>
-          {result.fact_check && (
-            <p>Fact-check: {result.fact_check.passed ? "✅ Passed" : "⚠️ Issues found"} — {result.fact_check.summary}</p>
+          <p>Words: {generateResult.score.word_count}</p>
+          {generateResult.fact_check && (
+            <p>Fact-check: {generateResult.fact_check.passed ? "Passed" : "Issues found"} — {generateResult.fact_check.summary}</p>
           )}
-          <article>{result.article.humanized}</article>
+          <button onClick={handleHumanize} disabled={isHumanizing}>
+            {isHumanizing ? "Humanizing..." : "Humanize"}
+          </button>
         </div>
+      )}
+
+      {publishableArticle && (
+        <article>{publishableArticle}</article>
       )}
     </div>
   );
@@ -598,12 +821,15 @@ The API server requires these variables in `.env` or the process environment:
 | Auth service (`WEBAPP_URL`) unreachable | HTTP `503 Service Unavailable` |
 | `WEBAPP_URL` or `CRON_SECRET_KEY` not set | HTTP `500 Internal Server Error` |
 | `draft` shorter than 50 characters | HTTP `422 Unprocessable Entity` before stream opens |
+| `article_type` is not a valid type key | HTTP `422 Unprocessable Entity` before stream opens |
 | `target_score` outside 0–100 | HTTP `422 Unprocessable Entity` |
 | `max_iterations` not equal to 1 | HTTP `422 Unprocessable Entity` (locked to 1) |
 | Invalid/unavailable model name | `error` event on the SSE stream |
 | `OPENROUTER_API_KEY` missing or invalid | `error` event on the SSE stream |
 | `TAVILY_API_KEY` missing (web search fails) | Generation continues without RAG context |
 | `target_score` not reached within `max_iterations` | `complete` event with `target_achieved: false`; best article is returned |
+| `article` shorter than 50 characters on `/humanize` | HTTP `422 Unprocessable Entity` before stream opens |
+| `UNDETECTABLE_API_KEY` missing when `use_undetectable: true` | Undetectable.ai pass silently skipped; LLM-only result returned |
 | Server not running | `fetch` throws `TypeError: Failed to fetch` |
 
 ---

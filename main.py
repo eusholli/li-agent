@@ -14,8 +14,10 @@ import time
 
 import dspy
 
+from humanizer import humanize_article
 from linkedin_article_generator import LinkedInArticleGenerator
 from dspy_factory import get_openrouter_model, DspyModelConfig
+from li_article_judge import ARTICLE_TYPES
 
 DEFAULT_MODEL = "moonshotai/kimi-k2-thinking"
 
@@ -52,6 +54,12 @@ def main():
     parser.add_argument("--rag-model", default=DEFAULT_MODEL)
     parser.add_argument("--no-fact-check", action="store_true", help="Skip fact-checking")
     parser.add_argument("--use-undetectable", action="store_true", help="Use Undetectable.ai API")
+    parser.add_argument(
+        "--article-type",
+        default="thought_leadership",
+        choices=ARTICLE_TYPES,
+        help="Type of article to generate (default: thought_leadership)",
+    )
 
     args = parser.parse_args()
 
@@ -101,13 +109,13 @@ The future will likely be hybrid, combining the best of both worlds.
         "generator": gen_cfg,
         "judge": judge_cfg,
         "rag": rag_cfg,
-        "humanizer": gen_cfg,
     }
 
-    print(f"Generator: {gen_cfg.name}")
-    print(f"Judge:     {judge_cfg.name}")
-    print(f"RAG:       {rag_cfg.name}")
-    print(f"Words:     {args.word_count_min}-{args.word_count_max}")
+    print(f"Generator:    {gen_cfg.name}")
+    print(f"Judge:        {judge_cfg.name}")
+    print(f"RAG:          {rag_cfg.name}")
+    print(f"Words:        {args.word_count_min}-{args.word_count_max}")
+    print(f"Article type: {args.article_type}")
     print()
 
     # Configure DSPy
@@ -122,7 +130,7 @@ The future will likely be hybrid, combining the best of both worlds.
         word_count_max=args.word_count_max,
         on_progress=cli_progress,
         fact_check=not args.no_fact_check,
-        use_undetectable=args.use_undetectable,
+        article_type=args.article_type,
     )
 
     try:
@@ -134,8 +142,14 @@ The future will likely be hybrid, combining the best of both worlds.
         print(f"Error: {e}")
         sys.exit(1)
 
-    # Output
-    article = result["humanized_article"]
+    # Humanize
+    humanizer_cfg = resolve_model(args.generator_model, args.model, temp=0.7)
+    with dspy.context(lm=humanizer_cfg.dspy_lm):
+        article = humanize_article(
+            result["article"],
+            on_progress=cli_progress,
+            use_undetectable=args.use_undetectable,
+        )
     word_count = result["word_count"]
 
     if args.output:

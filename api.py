@@ -1,12 +1,13 @@
 """
 LinkedIn Article Generator - REST API
 
-Streaming SSE endpoint for article generation.
+Streaming SSE endpoints for article generation and humanization.
 
 Event types:
   {"type": "progress", "stage": "<stage>", "message": "<text>"}
   {"type": "heartbeat"}
-  {"type": "complete", "article": {...}, "score": {...}, ...}
+  {"type": "complete", "article": {...}, "score": {...}, ...}  (generate)
+  {"type": "complete", "article": {"humanized": "<text>"}}     (humanize)
   {"type": "error", "message": "<text>"}
 """
 
@@ -25,8 +26,9 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
-from api_models import GenerateRequest
+from api_models import GenerateRequest, HumanizeRequest
 from auth import require_auth
+from humanizer import humanize_article
 from linkedin_article_generator import LinkedInArticleGenerator
 from model_cache import API_DEFAULT_MODEL_NAME, get_cached_model, resolve_model_cached
 
@@ -49,8 +51,7 @@ def _run_generation(req: GenerateRequest, progress_queue: queue.Queue) -> None:
         gen_cfg = resolve_model_cached(req.generator_model or default, default, temp=0.5)
         judge_cfg = resolve_model_cached(req.judge_model or default, default, temp=0.0)
         rag_cfg = resolve_model_cached(req.rag_model or default, default, temp=0.0)
-        humanizer_cfg = resolve_model_cached(req.generator_model or default, default, temp=0.7)
-        models = {"generator": gen_cfg, "judge": judge_cfg, "rag": rag_cfg, "humanizer": humanizer_cfg}
+        models = {"generator": gen_cfg, "judge": judge_cfg, "rag": rag_cfg}
 
         logger.info("Models resolved - gen=%s judge=%s rag=%s", gen_cfg.name, judge_cfg.name, rag_cfg.name)
 
@@ -64,7 +65,7 @@ def _run_generation(req: GenerateRequest, progress_queue: queue.Queue) -> None:
                 word_count_max=req.word_count_max,
                 on_progress=on_progress,
                 fact_check=req.fact_check,
-                use_undetectable=req.use_undetectable,
+                article_type=req.article_type,
             )
             result = generator.generate_article(req.draft)
 
@@ -74,8 +75,7 @@ def _run_generation(req: GenerateRequest, progress_queue: queue.Queue) -> None:
         progress_queue.put({
             "type": "complete",
             "article": {
-                "original": result["original_article"],
-                "humanized": result["humanized_article"],
+                "text": result["article"],
             },
             "score": {
                 "word_count": result["word_count"],
@@ -94,6 +94,38 @@ def _run_generation(req: GenerateRequest, progress_queue: queue.Queue) -> None:
 
     except Exception as exc:
         logger.error("Generation failed: %s\n%s", exc, traceback.format_exc())
+        progress_queue.put({"type": "error", "message": str(exc)})
+
+
+def _run_humanization(req: HumanizeRequest, progress_queue: queue.Queue) -> None:
+    """Blocking humanization worker. Puts progress/complete/error events into queue."""
+    try:
+        default = req.model
+        logger.info("Humanization started - model=%s undetectable=%s", default, req.use_undetectable)
+
+        humanizer_cfg = resolve_model_cached(req.humanizer_model or default, default, temp=0.7)
+        logger.info("Model resolved - humanizer=%s", humanizer_cfg.name)
+
+        def on_progress(stage: str, message: str):
+            progress_queue.put({"type": "progress", "stage": stage, "message": message})
+
+        with dspy.context(lm=humanizer_cfg.dspy_lm):
+            humanized = humanize_article(
+                req.article,
+                on_progress=on_progress,
+                use_undetectable=req.use_undetectable,
+            )
+
+        logger.info("Humanization complete")
+        progress_queue.put({
+            "type": "complete",
+            "article": {
+                "humanized": humanized,
+            },
+        })
+
+    except Exception as exc:
+        logger.error("Humanization failed: %s\n%s", exc, traceback.format_exc())
         progress_queue.put({"type": "error", "message": str(exc)})
 
 
@@ -125,18 +157,8 @@ app = FastAPI(
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
-@app.get("/health", tags=["meta"])
-async def health():
-    return {"status": "ok", "timestamp": datetime.datetime.utcnow().isoformat()}
-
-
-@app.post("/articles/generate", tags=["articles"])
-async def generate_article(req: GenerateRequest, auth: dict = Depends(require_auth)):
-    """Generate a LinkedIn article from a draft via SSE stream."""
-    progress_queue: queue.Queue = queue.Queue()
-    loop = asyncio.get_event_loop()
-    future = loop.run_in_executor(_executor, _run_generation, req, progress_queue)
-
+def _make_event_stream(progress_queue: queue.Queue, future, loop) -> AsyncGenerator:
+    """Shared SSE event stream generator for all streaming endpoints."""
     async def event_stream() -> AsyncGenerator:
         while True:
             try:
@@ -148,5 +170,27 @@ async def generate_article(req: GenerateRequest, auth: dict = Depends(require_au
                 if future.done():
                     break
                 yield {"data": json.dumps({"type": "heartbeat"})}
+    return event_stream()
 
-    return EventSourceResponse(event_stream())
+
+@app.get("/health", tags=["meta"])
+async def health():
+    return {"status": "ok", "timestamp": datetime.datetime.utcnow().isoformat()}
+
+
+@app.post("/articles/generate", tags=["articles"])
+async def generate_article(req: GenerateRequest, auth: dict = Depends(require_auth)):
+    """Generate a LinkedIn article from a draft via SSE stream."""
+    progress_queue: queue.Queue = queue.Queue()
+    loop = asyncio.get_event_loop()
+    future = loop.run_in_executor(_executor, _run_generation, req, progress_queue)
+    return EventSourceResponse(_make_event_stream(progress_queue, future, loop))
+
+
+@app.post("/humanize", tags=["articles"])
+async def humanize_article_endpoint(req: HumanizeRequest, auth: dict = Depends(require_auth)):
+    """Humanize a pre-generated article via SSE stream."""
+    progress_queue: queue.Queue = queue.Queue()
+    loop = asyncio.get_event_loop()
+    future = loop.run_in_executor(_executor, _run_humanization, req, progress_queue)
+    return EventSourceResponse(_make_event_stream(progress_queue, future, loop))

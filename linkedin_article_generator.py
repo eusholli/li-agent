@@ -2,7 +2,7 @@
 """
 LinkedIn Article Generator - Single-pass pipeline.
 
-Pipeline: RAG search -> generate article -> humanize -> optional fact-check
+Pipeline: RAG search -> generate article -> optional fact-check
 """
 
 import asyncio
@@ -15,7 +15,6 @@ import dspy
 from dspy_factory import DspyModelConfig
 from li_article_judge import CriteriaExtractor
 from rag_fast import retrieve_and_pack
-from humanizer import humanize_article
 
 logging.basicConfig(level=logging.WARNING)
 
@@ -26,6 +25,11 @@ logging.basicConfig(level=logging.WARNING)
 
 class ArticleGenerationSignature(dspy.Signature):
     """Generate a complete LinkedIn article in markdown format with these requirements:
+
+    ARTICLE TYPE:
+    - The article_type_context field defines the specific goal and style of the article
+    - Optimize every structural and stylistic decision for that goal
+    - The scoring_criteria field details exactly what will be evaluated — prioritize accordingly
 
     WORD LENGTH REQUIREMENT:
     - The top priority is to generate an article of the wanted length range
@@ -47,10 +51,13 @@ class ArticleGenerationSignature(dspy.Signature):
     CONTENT REQUIREMENTS:
     - Expand the draft/outline into a comprehensive LinkedIn article
     - Maintain professional LinkedIn tone and structure
-    - Objective and third-person, with a structured, business/technical tone
+    - Tailor tone and structure to the article type goal
     - Address all key points from the original draft"""
 
     original_draft: str = dspy.InputField(desc="Original draft to expand")
+    article_type_context: str = dspy.InputField(
+        desc="Goal and style description for the article type — shapes tone, structure, and content priorities"
+    )
     context: str = dspy.InputField(
         desc="Web research context with inline citations as [text](url)", default=""
     )
@@ -76,8 +83,7 @@ class LinkedInArticleGenerator:
     Pipeline:
       1. RAG web search for supporting context
       2. Generate article with scoring criteria in prompt
-      3. Humanize (single LLM pass)
-      4. Optional: fact-check against sources
+      3. Optional: fact-check against sources
     """
 
     def __init__(
@@ -87,16 +93,15 @@ class LinkedInArticleGenerator:
         word_count_max: int = 2500,
         on_progress: Optional[ProgressCallback] = None,
         fact_check: bool = True,
-        use_undetectable: bool = False,
+        article_type: str = "thought_leadership",
     ):
         self.models = models
         self.word_count_min = word_count_min
         self.word_count_max = word_count_max
         self.progress = on_progress or _noop_progress
         self.fact_check = fact_check
-        self.use_undetectable = use_undetectable
 
-        self.criteria_extractor = CriteriaExtractor(word_count_min, word_count_max)
+        self.criteria_extractor = CriteriaExtractor(word_count_min, word_count_max, article_type)
         self.generator = dspy.ChainOfThought(ArticleGenerationSignature)
 
     def generate_article(self, draft: str) -> Dict[str, Any]:
@@ -107,8 +112,7 @@ class LinkedInArticleGenerator:
             draft: Article draft or outline text
 
         Returns:
-            Dict with keys: original_article, humanized_article, word_count,
-                           fact_check_result (optional), context_urls
+            Dict with keys: article, word_count, fact_check_result (optional), context_urls
         """
         self.progress("start", "Starting article generation")
 
@@ -125,10 +129,12 @@ class LinkedInArticleGenerator:
         # 2. Generate article
         self.progress("generating", "Generating article...")
         scoring_criteria = self.criteria_extractor.get_criteria_for_generation()
+        article_type_context = self.criteria_extractor.get_article_type_description()
 
         with dspy.context(lm=self.models["generator"].dspy_lm):
             result = self.generator(
                 original_draft=draft,
+                article_type_context=article_type_context,
                 context=context,
                 scoring_criteria=scoring_criteria,
             )
@@ -156,20 +162,10 @@ class LinkedInArticleGenerator:
                 logging.error(f"Fact-checking failed: {e}")
                 self.progress("fact_check_results", f"Fact-check skipped: {e}")
 
-        # 4. Humanize
-        humanizer_cfg = self.models.get("humanizer") or self.models["generator"]
-        with dspy.context(lm=humanizer_cfg.dspy_lm):
-            humanized = humanize_article(
-                article,
-                on_progress=self.progress,
-                use_undetectable=self.use_undetectable,
-            )
-
         self.progress("complete_generation", "Article generation complete")
 
         return {
-            "original_article": article,
-            "humanized_article": humanized,
+            "article": article,
             "word_count": word_count,
             "fact_check_result": fact_check_result,
             "context_urls": urls,
