@@ -114,6 +114,10 @@ def _run_humanization(req: HumanizeRequest, progress_queue: queue.Queue) -> None
                 req.article,
                 on_progress=on_progress,
                 use_undetectable=req.use_undetectable,
+                readability=req.readability,
+                purpose=req.purpose,
+                strength=req.strength,
+                undetectable_model=req.undetectable_model,
             )
 
         logger.info("Humanization complete")

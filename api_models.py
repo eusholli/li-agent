@@ -1,7 +1,7 @@
 """Pydantic request/response models for the LinkedIn Article Generator API."""
 
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional
+from typing import Literal, Optional
 
 from li_article_judge import ARTICLE_TYPES
 
@@ -82,6 +82,25 @@ class HumanizeRequest(BaseModel):
     use_undetectable: bool = Field(
         False,
         description="Whether to also run through Undetectable.ai API (requires UNDETECTABLE_API_KEY)",
+    )
+    readability: Literal["High School", "University", "Doctorate", "Journalist", "Marketing"] = Field(
+        "University",
+        description="Undetectable.ai readability level (only used when use_undetectable=true)",
+    )
+    purpose: Literal[
+        "General Writing", "Essay", "Article", "Marketing Material",
+        "Story", "Cover Letter", "Report", "Business Material", "Legal Material"
+    ] = Field(
+        "Article",
+        description="Undetectable.ai content purpose (only used when use_undetectable=true)",
+    )
+    strength: Literal["Quality", "Balanced", "More Human"] = Field(
+        "More Human",
+        description="Undetectable.ai humanization strength (only used when use_undetectable=true)",
+    )
+    undetectable_model: Literal["v2", "v11", "v11sr"] = Field(
+        "v11sr",
+        description="Undetectable.ai model — v11sr gives the best English results (only used when use_undetectable=true)",
     )
 
     model_config = {

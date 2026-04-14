@@ -144,6 +144,46 @@ Authorization: Bearer <clerk_jwt>
 | `model` | string | no | `"gemini/gemini-2.5-flash"` | — | Default fallback model |
 | `humanizer_model` | string\|null | no | `null` | — | Override model for the humanization LLM pass (overrides `model`) |
 | `use_undetectable` | boolean | no | `false` | — | Whether to also run through Undetectable.ai API (requires `UNDETECTABLE_API_KEY`) |
+| `readability` | string | no | `"University"` | see [Undetectable.ai Parameters](#undetectableai-parameters) | Target reading level for the humanized output |
+| `purpose` | string | no | `"Article"` | see [Undetectable.ai Parameters](#undetectableai-parameters) | Content type passed to Undetectable.ai |
+| `strength` | string | no | `"More Human"` | `"Quality"`, `"Balanced"`, `"More Human"` | Humanization aggressiveness |
+| `undetectable_model` | string | no | `"v11sr"` | `"v2"`, `"v11"`, `"v11sr"` | Undetectable.ai model — `v11sr` gives the best English results |
+
+> All four Undetectable.ai fields (`readability`, `purpose`, `strength`, `undetectable_model`) are only used when `use_undetectable: true`. They are silently ignored otherwise.
+
+### Undetectable.ai Parameters
+
+**`readability`** — target reading level:
+
+| Value | Audience |
+|---|---|
+| `"High School"` | General / informal |
+| `"University"` | Professional (default) |
+| `"Doctorate"` | Academic / research |
+| `"Journalist"` | News / editorial |
+| `"Marketing"` | Sales / promotional |
+
+**`purpose`** — content type:
+
+| Value |
+|---|
+| `"General Writing"` |
+| `"Essay"` |
+| `"Article"` (default) |
+| `"Marketing Material"` |
+| `"Story"` |
+| `"Cover Letter"` |
+| `"Report"` |
+| `"Business Material"` |
+| `"Legal Material"` |
+
+**`undetectable_model`** — processing model:
+
+| Value | Notes |
+|---|---|
+| `"v2"` | Multilingual, moderate humanization |
+| `"v11"` | English-optimised, high-level transformation |
+| `"v11sr"` | Slower, superior English results (default) |
 
 **Minimal request example**
 
@@ -159,7 +199,11 @@ Authorization: Bearer <clerk_jwt>
 {
   "article": "# Why AI Strategy Must Start at the Board Level\n\nMost executives think AI will automate their workforce...",
   "humanizer_model": "gemini/gemini-2.5-pro",
-  "use_undetectable": false
+  "use_undetectable": true,
+  "readability": "University",
+  "purpose": "Article",
+  "strength": "More Human",
+  "undetectable_model": "v11sr"
 }
 ```
 
@@ -344,11 +388,37 @@ export interface GenerateRequest {
   fact_check?: boolean;            // default true
 }
 
+export type UndetectableReadability =
+  | "High School"
+  | "University"
+  | "Doctorate"
+  | "Journalist"
+  | "Marketing";
+
+export type UndetectablePurpose =
+  | "General Writing"
+  | "Essay"
+  | "Article"
+  | "Marketing Material"
+  | "Story"
+  | "Cover Letter"
+  | "Report"
+  | "Business Material"
+  | "Legal Material";
+
+export type UndetectableStrength = "Quality" | "Balanced" | "More Human";
+
+export type UndetectableModel = "v2" | "v11" | "v11sr";
+
 export interface HumanizeRequest {
   article: string;
-  model?: string;                  // default "gemini/gemini-2.5-flash"
-  humanizer_model?: string | null; // overrides model for the LLM humanization pass
-  use_undetectable?: boolean;      // default false — requires UNDETECTABLE_API_KEY server-side
+  model?: string;                       // default "gemini/gemini-2.5-flash"
+  humanizer_model?: string | null;      // overrides model for the LLM humanization pass
+  use_undetectable?: boolean;           // default false — requires UNDETECTABLE_API_KEY server-side
+  readability?: UndetectableReadability; // default "University"
+  purpose?: UndetectablePurpose;        // default "Article"
+  strength?: UndetectableStrength;      // default "More Human"
+  undetectable_model?: UndetectableModel; // default "v11sr" (best English results)
 }
 
 // ── SSE Events ───────────────────────────────────────────────────────────────

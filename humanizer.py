@@ -96,17 +96,26 @@ class UndetectableApi:
     def __init__(self, api_key: str):
         self._headers = {"apikey": api_key}
 
-    def humanize(self, text: str, on_progress=None, timeout_seconds: int = 300) -> str:
+    def humanize(
+        self,
+        text: str,
+        on_progress=None,
+        timeout_seconds: int = 300,
+        readability: str = "University",
+        purpose: str = "Article",
+        strength: str = "More Human",
+        model: str = "v11sr",
+    ) -> str:
         resp = httpx.post(
             f"{self.BASE_URL}/submit",
             headers=self._headers,
             timeout=30.0,
             json={
                 "content": text,
-                "readability": "University",
-                "purpose": "Article",
-                "strength": "More Human",
-                "model": "v11",
+                "readability": readability,
+                "purpose": purpose,
+                "strength": strength,
+                "model": model,
             },
         )
         resp.raise_for_status()
@@ -129,7 +138,15 @@ class UndetectableApi:
         raise TimeoutError(f"Undetectable.ai timed out after {timeout_seconds}s")
 
 
-def humanize_article(article: str, on_progress=None, use_undetectable: bool = False) -> str:
+def humanize_article(
+    article: str,
+    on_progress=None,
+    use_undetectable: bool = False,
+    readability: str = "University",
+    purpose: str = "Article",
+    strength: str = "More Human",
+    undetectable_model: str = "v11sr",
+) -> str:
     """
     Humanize an article: single LLM pass + optional Undetectable.ai.
 
@@ -137,6 +154,10 @@ def humanize_article(article: str, on_progress=None, use_undetectable: bool = Fa
         article: Article text to humanize
         on_progress: Optional callback(stage, message)
         use_undetectable: Whether to also run through Undetectable.ai API
+        readability: Undetectable.ai readability level
+        purpose: Undetectable.ai content purpose
+        strength: Undetectable.ai humanization strength
+        undetectable_model: Undetectable.ai model (v11sr = best English results)
 
     Returns:
         Humanized article text
@@ -156,7 +177,14 @@ def humanize_article(article: str, on_progress=None, use_undetectable: bool = Fa
             try:
                 progress("humanizing_api", "Submitted to humanization service...")
                 api = UndetectableApi(api_key)
-                humanized = api.humanize(humanized, on_progress=progress)
+                humanized = api.humanize(
+                    humanized,
+                    on_progress=progress,
+                    readability=readability,
+                    purpose=purpose,
+                    strength=strength,
+                    model=undetectable_model,
+                )
                 progress("humanizing_api_done", "Humanization service complete")
             except Exception as e:
                 logging.warning(f"Undetectable.ai skipped: {e}")
